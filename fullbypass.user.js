@@ -965,10 +965,11 @@
   // 3) Other shorteners (bstlar/rekonise/mboost) from friend's script
   // =========================
   function runOtherShorteners() {
-    // UI adapted to match @afkar card style.
-    // Core bypass logic/functions originally by awaitlol (kxBypass Shortlinks Bypasser).
+    // Backend logic aligned with upstream GreasyFork script:
+    // https://update.greasyfork.org/scripts/530209/kxBypass%20Shortlinks%20Bypasser%20%5BREAD%20DESCRIPTION%5D.user.js
+    // UI remains your card UI + auto-redirect.
 
-    // awaitlol: showBypassModal
+    // awaitlol: showBypassModal (UI adjusted by @afkar)
     function showBypassModal(link) {
       const existing = document.getElementById('kxBypass-modal');
       if (existing) existing.remove();
@@ -1105,12 +1106,14 @@
       }, 3000);
     }
 
+    // awaitlol: hasCloudflare
     function hasCloudflare() {
       const pageText = document.body?.innerText || '';
       const pageHTML = document.documentElement?.innerHTML || '';
       return pageText.includes('Just a moment') || pageHTML.includes('Just a moment');
     }
 
+    // awaitlol: handleBstlar
     function handleBstlar() {
       if (hasCloudflare()) return;
 
@@ -1146,9 +1149,10 @@
         })
         .then((response) => response.text())
         .then((finalLink) => showBypassModal(finalLink))
-        .catch((e) => showBypassModal(`Error: ${String(e?.message || e)}`));
+        .catch(console.error);
     }
 
+    // awaitlol: handleRekonise
     function handleRekonise() {
       if (hasCloudflare()) return;
 
@@ -1167,25 +1171,30 @@
           const responseText = JSON.stringify(data);
           const urlMatch = responseText.match(/(https?:\/\/[^\s"]+)/);
           const foundUrl = urlMatch ? urlMatch[0] : null;
-          showBypassModal(foundUrl || 'Error: destination not found');
+
+          if (foundUrl) {
+            showBypassModal(foundUrl);
+          } else {
+            showBypassModal('Error, please join Discord Server in the Greasyfork script.');
+          }
         })
-        .catch((e) => showBypassModal(`Error: ${String(e?.message || e)}`));
+        .catch(console.error);
     }
 
+    // awaitlol: handleMboost
     function handleMboost() {
       const pageContent = document.documentElement?.outerHTML || '';
       const targetUrlMatches = [...pageContent.matchAll(/"targeturl\\":\\"(https?:\/\/[^\\"]+)/g)];
-      if (targetUrlMatches.length === 0) {
-        showBypassModal('Could not find destination!');
-        return;
-      }
-      // If multiple found, show the first.
-      showBypassModal(targetUrlMatches[0][1]);
-    }
 
-    const style = document.createElement('style');
-    style.textContent = styleCSS;
-    document.head.appendChild(style);
+      targetUrlMatches.forEach((match) => {
+        const url = match[1];
+        showBypassModal(url);
+      });
+
+      if (targetUrlMatches.length === 0) {
+        showBypassModal('Could not find destination! Please join our Discord.');
+      }
+    }
 
     if (window.location.href.includes('bstlar.com')) handleBstlar();
     else if (window.location.href.includes('rekonise.com/')) handleRekonise();
