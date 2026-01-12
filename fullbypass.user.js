@@ -850,8 +850,25 @@
       return decodedString;
     }
 
+    async function waitForLootlinksConstants(timeoutMs = 20000, intervalMs = 200) {
+      const started = Date.now();
+      while (Date.now() - started < timeoutMs) {
+        const INCENTIVE_SERVER_DOMAIN = window.INCENTIVE_SERVER_DOMAIN;
+        const INCENTIVE_SYNCER_DOMAIN = window.INCENTIVE_SYNCER_DOMAIN;
+        const KEY = window.KEY;
+        const TID = window.TID;
+        if (INCENTIVE_SERVER_DOMAIN && INCENTIVE_SYNCER_DOMAIN && KEY && TID) {
+          return { INCENTIVE_SERVER_DOMAIN, INCENTIVE_SYNCER_DOMAIN, KEY, TID };
+        }
+        await new Promise((r) => setTimeout(r, intervalMs));
+      }
+      return null;
+    }
+
     function handleLootlinks() {
       const originalFetch = window.fetch;
+      const processedUrids = new Set();
+
       window.fetch = async function (...args) {
         const [resource] = args;
         const url = typeof resource === 'string' ? resource : resource.url;
@@ -864,53 +881,63 @@
             if (Array.isArray(data) && data.length > 0) {
               const { urid, task_id, action_pixel_url, session_id } = data[0];
 
-              // These are expected to exist on the page; if not, fail gracefully.
-              const INCENTIVE_SERVER_DOMAIN = window.INCENTIVE_SERVER_DOMAIN;
-              const INCENTIVE_SYNCER_DOMAIN = window.INCENTIVE_SYNCER_DOMAIN;
-              const KEY = window.KEY;
-              const TID = window.TID;
+              // Avoid re-processing the same tc payload (prevents duplicate websocket / redirects)
+              if (processedUrids.has(urid)) return response;
+              processedUrids.add(urid);
 
-              if (!INCENTIVE_SERVER_DOMAIN || !INCENTIVE_SYNCER_DOMAIN || !KEY || !TID) {
-                console.warn('Missing Lootlinks constants on page:', {
-                  INCENTIVE_SERVER_DOMAIN,
-                  INCENTIVE_SYNCER_DOMAIN,
-                  KEY,
-                  TID,
-                });
-                showError('Missing required Lootlinks constants on the page.');
-                return response;
-              }
+              // Do NOT fail instantly: on some Lootlinks pages constants are injected after their loading UI.
+              // Run the bypass async, and wait briefly for the constants to appear.
+              void (async () => {
+                const overlay = createOverlay();
+                const action = overlay?.querySelector?.('#kxBypass-action');
+                if (action) action.textContent = 'Waiting for page to finish loading…';
 
-              const shard = parseInt(String(urid).slice(-5), 10) % 3;
-
-              const ws = new WebSocket(
-                `wss://${shard}.${INCENTIVE_SERVER_DOMAIN}/c?uid=${urid}&cat=${task_id}&key=${KEY}&session_id=${session_id}&is_loot=1&tid=${TID}`,
-              );
-
-              ws.onopen = () => setInterval(() => ws.send('0'), 1000);
-              ws.onmessage = (e) => {
-                if (typeof e.data === 'string' && e.data.startsWith('r:')) {
-                  const encoded = e.data.slice(2);
-                  try {
-                    const destinationUrl = decodeDestination(encoded);
-                    setTimeout(() => showSuccess(destinationUrl), 2000);
-                  } catch (err) {
-                    console.error('Decryption error:', err);
-                    showError('Failed to decrypt URL');
-                  }
+                const constants = await waitForLootlinksConstants(20000, 200);
+                if (!constants) {
+                  console.warn('Missing Lootlinks constants on page after waiting.');
+                  showError('Missing required Lootlinks constant on the page (timed out).');
+                  return;
                 }
-              };
 
-              // Send beacons and pixel fetches
-              try {
-                navigator.sendBeacon(`https://${shard}.${INCENTIVE_SERVER_DOMAIN}/st?uid=${urid}&cat=${task_id}`);
-              } catch (_) {}
-              try {
-                fetch(`https:${action_pixel_url}`);
-              } catch (_) {}
-              try {
-                fetch(`https://${INCENTIVE_SYNCER_DOMAIN}/td?ac=auto_complete&urid=${urid}&cat=${task_id}&tid=${TID}`);
-              } catch (_) {}
+                const { INCENTIVE_SERVER_DOMAIN, INCENTIVE_SYNCER_DOMAIN, KEY, TID } = constants;
+                const shard = parseInt(String(urid).slice(-5), 10) % 3;
+
+                try {
+                  if (action) action.textContent = 'Completing tasks…';
+
+                  const ws = new WebSocket(
+                    `wss://${shard}.${INCENTIVE_SERVER_DOMAIN}/c?uid=${urid}&cat=${task_id}&key=${KEY}&session_id=${session_id}&is_loot=1&tid=${TID}`,
+                  );
+
+                  ws.onopen = () => setInterval(() => ws.send('0'), 1000);
+                  ws.onmessage = (e) => {
+                    if (typeof e.data === 'string' && e.data.startsWith('r:')) {
+                      const encoded = e.data.slice(2);
+                      try {
+                        const destinationUrl = decodeDestination(encoded);
+                        setTimeout(() => showSuccess(destinationUrl), 2000);
+                      } catch (err) {
+                        console.error('Decryption error:', err);
+                        showError('Failed to decrypt URL');
+                      }
+                    }
+                  };
+
+                  // Send beacons and pixel fetches
+                  try {
+                    navigator.sendBeacon(`https://${shard}.${INCENTIVE_SERVER_DOMAIN}/st?uid=${urid}&cat=${task_id}`);
+                  } catch (_) {}
+                  try {
+                    fetch(`https:${action_pixel_url}`);
+                  } catch (_) {}
+                  try {
+                    fetch(`https://${INCENTIVE_SYNCER_DOMAIN}/td?ac=auto_complete&urid=${urid}&cat=${task_id}&tid=${TID}`);
+                  } catch (_) {}
+                } catch (e) {
+                  console.error('Lootlinks bypass runtime error:', e);
+                  showError('Bypass failed - runtime error');
+                }
+              })();
             }
 
             return response;
