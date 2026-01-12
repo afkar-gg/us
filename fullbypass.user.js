@@ -874,7 +874,24 @@
                 `wss://${shard}.${INCENTIVE_SERVER_DOMAIN}/c?uid=${urid}&cat=${task_id}&key=${KEY}&session_id=${session_id}&is_loot=1&tid=${TID}`,
               );
 
-              ws.onopen = () => setInterval(() => ws.send('0'), 1000);
+              let __kxWsPing = null;
+              ws.onopen = () => {
+                __kxWsPing = setInterval(() => {
+                  try {
+                    if (ws.readyState === WebSocket.OPEN) ws.send('0');
+                  } catch (_) {
+                    // ignore
+                  }
+                }, 1000);
+              };
+              ws.onclose = () => {
+                if (__kxWsPing) clearInterval(__kxWsPing);
+                __kxWsPing = null;
+              };
+              ws.onerror = () => {
+                if (__kxWsPing) clearInterval(__kxWsPing);
+                __kxWsPing = null;
+              };
 
               ws.onmessage = (e) => {
                 if (e.data.startsWith('r:')) {
